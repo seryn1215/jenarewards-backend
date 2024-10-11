@@ -1,0 +1,6 @@
+{% extends "base.html" %} {% block content %}
+<h2>{{ project.name }}</h2>
+<p>Schedule: {{ project.start_data }} - {{project.end_date}}</p>
+<p>Maximum participants: {{ project.max_participants }}</p>
+<p>Current participants: {{ project.current_participants }}</p>
+{% endblock %}

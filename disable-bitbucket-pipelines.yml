@@ -1,0 +1,197 @@
+image: python:3.9
+
+options:
+  docker: true
+  size: 2x
+
+definitions:
+  services:
+    docker:
+      memory: 4096
+    docker-with-large-memory:
+        memory: 5120
+        type: docker
+    docker-custom: # Define a custom docker daemon - can only be used with a self-hosted runner
+      image: docker:dind
+      privileged: true
+  steps:
+    # - step: &build_img
+    #     name: My Runner
+    #     image: atlassian/default-image:4
+    #     runs-on:
+    #       - linux
+    #       - self.hosted
+    #     services:
+    #       - docker-custom
+    #     script:
+    #       - echo "Executing on self-hosted runner" 
+    #       - export DOCKER_CLI_EXPERIMENTAL=enabled # Enable usage of buildx in Docker version < 23
+    #       - export BUILDX_VERSION=0.11.0  # define what BUILDX_VERSION to download and install
+    #       - curl -fsSLO https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64
+    #       - mkdir -p $HOME/.docker/cli-plugins/ && mv buildx-v${BUILDX_VERSION}.linux-amd64 $HOME/.docker/cli-plugins/docker-buildx && chmod +x ~/.docker/cli-plugins/docker-buildx # download buildx and move it to the docker plugin folder
+    #       - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes; docker buildx create --use # setup the QEMU emulation environment
+    #       # - echo $DOCKER_HUB_PASS | docker login --username $DOCKER_HUB_USER --password-stdin # login to Dockerhub 
+    #       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL
+    #       - docker buildx build -t $DOCKER_HUB_USER/my_image_multi_arch:my_tag --push --platform linux/arm64
+
+    - step: &build_verify
+        name: Build verify
+        size: 2x
+        services: [docker-with-large-memory] # Enable Docker for your repository
+        script:
+          - if [ "${BITBUCKET_PR_DESTINATION_BRANCH}" != "develop" ]; then printf 'run only for development branch'; exit; fi
+          - printf "step:build_verify - $DEPLOYMENT_TARGET"
+          - pip3 install awscli
+          - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL  
+          - aws s3 cp $ENV_FILE_PATH .env.secure
+          - export BUILD_ENV_HASH=$(grep "${DEPLOYMENT_TARGET}" .env.secure | awk -F  "$DEPLOYMENT_TARGET=" '{print $2}')
+          - echo $BUILD_ENV_HASH | base64 --decode > .env
+          - printf "step:build_verify - $DEPLOYMENT_TARGET"
+          - pip install pipenv --upgrade
+          - pipenv install --dev --deploy --system
+          - pytest
+        artifacts:
+          - reports/**
+          - .env
+    - step: &image_buildx
+        name: Image Build & Testing
+        image: atlassian/default-image:4
+        runs-on: ubuntu.latest
+          # - linux.arm64
+          # - self.hosted
+        services:
+          - docker-custom
+        script:
+          # - echo Step:image_build_push-$BITBUCKET_DEPLOYMENT_ENVIRONMENT
+          - echo "Executing on self-hosted runner" 
+          - export DOCKER_CLI_EXPERIMENTAL=enabled # Enable usage of buildx in Docker version < 23
+          - export BUILDX_VERSION=0.11.0  # define what BUILDX_VERSION to download and install
+          - curl -fsSLO https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64
+          - mkdir -p $HOME/.docker/cli-plugins/ && mv buildx-v${BUILDX_VERSION}.linux-amd64 $HOME/.docker/cli-plugins/docker-buildx && chmod +x ~/.docker/cli-plugins/docker-buildx # download buildx and move it to the docker plugin folder
+          - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes; docker buildx create --use # setup the QEMU emulation environment
+          
+          - pip3 install awscli
+          - aws s3 cp $ENV_FILE_PATH .env.secure
+          - export BUILD_ENV_HASH=$(grep "${DEPLOYMENT_TARGET}" .env.secure | awk -F  "$DEPLOYMENT_TARGET=" '{print $2}')
+          - echo $BUILD_ENV_HASH | base64 --decode > .env
+          
+          - export IMAGE="${AWS_REGISTRY_URL}/${AWS_REGISTRY_REPO}"
+          - export IMG_TAG="${BITBUCKET_BRANCH}.BUILD-${BITBUCKET_BUILD_NUMBER}"
+          - if [ "${BITBUCKET_BRANCH}" = "" ]; then export IMG_TAG="${BITBUCKET_TAG}.BUILD-${BITBUCKET_BUILD_NUMBER}"; fi
+          - export TAG=$(echo $MODULE_PREFIX-$IMG_TAG | sed -r 's/[/]+/_/g')
+          - export IMAGE_NAME=$IMAGE:$TAG
+          - export IMAGE_NAME_LATEST="${IMAGE}:${MODULE_PREFIX}-latest"
+
+          - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL
+          - docker buildx build -t $IMAGE_NAME -t $IMAGE_NAME_LATEST --push --platform linux/arm64
+          - echo $IMAGE_NAME > image-tag.txt
+          # - sed -i 's/image: old_image/image: myapp:latest/g' docker-compose.yml
+          # - sed -i "s/image: dummy_name_will_be_used_in_bitbucket_pipeline/image: $IMAGE_NAME/g" docker-compose.yml
+          - sed -i "s/dummy_name_will_be_used_in_bitbucket_pipeline/$IMAGE_NAME/g" docker-compose.yml
+          - apt-get update && apt-get install -y zip
+          - zip -r application.zip .env ./docker-compose.yml
+
+        artifacts: 
+          - application.zip
+          - reports/**
+          # - .env
+
+    - step: &image_build_push
+        name: Image Build & Testing
+        script:
+          -  echo Step:image_build_push-$BITBUCKET_DEPLOYMENT_ENVIRONMENT
+          -  pip3 install awscli
+          -  aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL  
+          -  aws s3 cp $ENV_FILE_PATH .env.secure
+          -  export BUILD_ENV_HASH=$(grep "${DEPLOYMENT_TARGET}" .env.secure | awk -F  "$DEPLOYMENT_TARGET=" '{print $2}')
+          -  echo $BUILD_ENV_HASH | base64 --decode > .env
+          -  apt-get update && apt-get install -y zip
+          -  zip -r application.zip .env ./docker-compose.yml
+        artifacts: 
+          - application.zip
+          - reports/**
+          # - .env
+
+    - step: &image_build_ecr
+        name: Image Build & Testing
+        size: 2x
+        services: [docker-with-large-memory] # Enable Docker for your repository
+        script:
+          - echo Step:image_build_ecr-$BITBUCKET_DEPLOYMENT_ENVIRONMENT
+          - pip3 install awscli
+          - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL  
+          - aws s3 cp $ENV_FILE_PATH .env.secure
+          - export BUILD_ENV_HASH=$(grep "${DEPLOYMENT_TARGET}" .env.secure | awk -F  "$DEPLOYMENT_TARGET=" '{print $2}')
+          - echo $BUILD_ENV_HASH | base64 --decode > .env
+          - export IMAGE="${AWS_REGISTRY_URL}/${ECR_REPO}"
+          - export TAG="${BITBUCKET_BRANCH}.BUILD-${BITBUCKET_BUILD_NUMBER}"
+          - if [ "${BITBUCKET_BRANCH}" = "" ]; then export TAG="${BITBUCKET_TAG}.BUILD-${BITBUCKET_BUILD_NUMBER}"; fi
+          - export IMAGE_NAME=$IMAGE:$TAG
+          - export IMAGE_NAME_LATEST="${IMAGE}:latest"
+          - docker rmi $IMAGE_NAME_LATEST -f
+          - export APP_TAG="APP_VERSION=${TAG}"
+          - echo "" >> .env
+          - echo "${APP_TAG}" >> .env
+          - docker build -t $IMAGE_NAME -t $IMAGE_NAME_LATEST .
+          - docker image ls
+          - echo $IMAGE_NAME > image-tag.txt
+          - docker push -a $IMAGE
+        artifacts: 
+          - image-tag.txt
+
+    - step: &image_tag_deploy
+        name: deploy tag to ECS
+        image: python:3.7.4-alpine3.10
+        script:
+          - pip3 install awscli
+          - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL
+          # - echo "step:image_deploy $DEPLOYMENT_TARGET, $BITBUCKET_DEPLOYMENT_ENVIRONMENT"
+          - export IMAGE_NAME=$(cat ./image-tag.txt)
+          - echo "Image:${IMAGE_NAME}"
+          - aws cloudformation update-stack --use-previous-template --stack-name $CF_STACK --parameters ParameterKey=EcrArn,ParameterValue=$IMAGE_NAME --capabilities CAPABILITY_IAM --region $AWS_DEFAULT_REGION
+    
+    - step: &image_eb_deploy
+        name: "Deploy to dev"
+        script:
+         -  echo Step:image_deploy-$BITBUCKET_DEPLOYMENT_ENVIRONMENT
+         -  echo AWS_ENV_NAME=$AWS_ENV_NAME
+         - pipe: atlassian/aws-elasticbeanstalk-deploy:0.5.0
+           variables:
+            AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+            AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+            APPLICATION_NAME: $AWS_APP_NAME 
+            ENVIRONMENT_NAME:  $AWS_ENV_NAME
+            S3_BUCKET: $DEPLOY_S3
+            ZIP_FILE: "application.zip"
+
+pipelines:
+  pull-requests:
+    "**": #this runs as default for any branch not elsewhere defined
+      - step:
+          <<: *build_verify
+          deployment: dev-mr-verify
+  branches:
+    develop:
+      - step:
+          <<: *image_build_push
+          deployment: dev-build-push
+      - step:
+          <<: *image_eb_deploy 
+          deployment: dev-deploy
+          
+    qa:
+      - step:
+          <<: *image_buildx
+          deployment: qa-build-push
+      - step:
+          <<: *image_eb_deploy
+          deployment: qa-deploy
+
+    main:
+      - step:
+          <<: *image_build_push
+          deployment: prod-build-push
+      - step:
+          <<: *image_eb_deploy
+          deployment: prod-deploy

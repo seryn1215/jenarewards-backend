@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  with-docker:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    restart: always
+    image: 371428749708.dkr.ecr.ap-northeast-2.amazonaws.com/capsulehub-ml-repo:reward-points-backend_v1.0
+    ports:
+      - '80:8000'
+    env_file:
+      - .env

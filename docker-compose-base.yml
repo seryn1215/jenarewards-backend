@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  with-docker:
+    build:
+      context: ./
+      dockerfile: Dockerfile-base
+    platform: linux/arm64/v8
+    image: imcapsule/capsulehub-ml-repo:reward-pts-api-base_v1.1
+    ports:
+      - '80:8000'
+    env_file:
+      - .env

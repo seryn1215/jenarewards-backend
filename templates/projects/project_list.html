@@ -1,0 +1,13 @@
+{% extends "base.html" %} {% block content %}
+<h1>Projects</h1>
+<ul>
+  {% for project in projects %}
+  <li>
+    <a href="{% url 'project_detail' project.id %}">{{ project.name }}</a>
+    <p>Schedule: {{ project.start_data }} - {{project.end_date}}</p>
+    <p>Maximum participants: {{ project.max_participants }}</p>
+    <p>Current participants: {{ project.current_participants }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

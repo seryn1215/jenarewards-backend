@@ -1,0 +1,67 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Installing AWS CLI..."
+      - yum install -y awscli gettext zip
+      - cat sample-Dockerrun.aws.json
+  pre_build:
+    commands:
+      - echo Setting environment variables...
+      - export BRANCH_NAME=$(echo $CODEBUILD_WEBHOOK_HEAD_REF | awk -F'/' '{print $3}')
+      - export TAG_NAME=$(echo $CODEBUILD_WEBHOOK_HEAD_REF | awk -F'/' '{print $3}')
+      - export BUILD_NUMBER=$CODEBUILD_BUILD_NUMBER
+      - export IMG_TAG="${BRANCH_NAME}.BUILD-${BUILD_NUMBER}"
+      - if [ "${BRANCH_NAME}" = "" ]; then export IMG_TAG="${TAG_NAME}.BUILD-${BUILD_NUMBER}"; fi
+      - export TAG=$(echo $MODULE_PREFIX-$IMG_TAG-arm64 | sed -r 's/[/]+/_/g')
+      - export IMAGE="${AWS_REGISTRY_URL}/${AWS_REGISTRY_REPO}"
+      - export IMAGE_NAME=$IMAGE:$TAG
+      - export IMAGE_NAME_LATEST="${IMAGE}:${MODULE_PREFIX}-latest"
+      - envsubst < sample-Dockerrun.aws.json >  Dockerrun.aws.json
+      - ls 
+      - cat Dockerrun.aws.json
+
+      # - aws s3 ls
+      - aws s3 cp $ENV_FILE_PATH .env.secure
+      - export BUILD_ENV_HASH=$(grep "${DEPLOYMENT_TARGET}" .env.secure | awk -F  "$DEPLOYMENT_TARGET=" '{print $2}')
+      - echo $BUILD_ENV_HASH | base64 --decode > .env
+
+      - echo Setting up QEMU emulation environment...
+      - echo "Executing on self-hosted runner" 
+      - export DOCKER_CLI_EXPERIMENTAL=enabled # Enable usage of buildx in Docker version < 23
+      - export BUILDX_VERSION=0.11.2  # define what BUILDX_VERSION to download and install
+      - curl -fsSLO https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64
+      - mkdir -p $HOME/.docker/cli-plugins/ && mv buildx-v${BUILDX_VERSION}.linux-amd64 $HOME/.docker/cli-plugins/docker-buildx && chmod +x ~/.docker/cli-plugins/docker-buildx # download buildx and move it to the docker plugin folder
+      - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes; docker buildx create --use # setup the QEMU emulation environment
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_REGISTRY_URL
+      
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker buildx build -t $IMAGE_NAME -t $IMAGE_NAME_LATEST --push --platform linux/arm64 .
+
+  post_build:
+    commands:
+      - echo Deploying to Elastic Beanstalk...
+      - export VERSION_LABEL="${TAG}-$(date +%Y%m%d%H%M%S)"
+      - export S3_BUCKET_NAME="${DEPLOY_S3}"
+      - export S3_OBJECT_KEY="application.zip"
+      - export ELASTIC_BEANSTALK_ENVIRONMENT_NAME=$AWS_ENV_NAME
+      - export ELASTIC_BEANSTALK_APPLICATION_NAME=$AWS_APP_NAME
+      - export ELASTIC_BEANSTALK_VERSION_LABEL="$VERSION_LABEL"
+      - echo IMAGE_NAME=$IMAGE_NAME
+      # - sed -i "s/dummy_name_will_be_used_in_bitbucket_pipeline/$IMAGE_NAME/g" docker-compose.yml
+      - cat Dockerrun.aws.json
+      # - zip -r application.zip .env ./docker-compose.yml
+      - zip -r application.zip .env Dockerrun.aws.json
+      - aws s3 cp application.zip s3://$S3_BUCKET_NAME/$S3_OBJECT_KEY
+      - aws elasticbeanstalk create-application-version --application-name $ELASTIC_BEANSTALK_APPLICATION_NAME --version-label $ELASTIC_BEANSTALK_VERSION_LABEL --source-bundle S3Bucket=$S3_BUCKET_NAME,S3Key=$S3_OBJECT_KEY
+      - aws elasticbeanstalk update-environment --environment-name $ELASTIC_BEANSTALK_ENVIRONMENT_NAME --version-label $ELASTIC_BEANSTALK_VERSION_LABEL
+
+  # final:
+  #   commands:
+  #     - echo Sending email notification...
+  #     - if [ $CODEBUILD_BUILD_SUCCEEDING -eq 0 ]; then export SUBJECT="Build failed"; else export SUBJECT="Build succeeded"; fi
+  #     - aws sns publish --topic-arn $SNS_TOPIC_ARN --subject "$SUBJECT" --message "Build $SUBJECT for $CODEBUILD_SOURCE_VERSION"

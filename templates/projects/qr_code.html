@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load webpack_loader static %}
+
+{% block title %}QR Code - Rewards{% endblock %}
+
+{% block content %}
+<div class="bg-black min-h-screen flex flex-col items-center justify-center">
+    <div class="max-w-lg mx-auto bg-white p-6 rounded-lg shadow-md">
+        <h1 class="text-3xl font-semibold mb-4 text-center">{{ project.name }}</h1>
+
+        <!-- QR Code (Horizontally Centered) -->
+        {% if project.qr_code %}
+        <div class="text-center mb-6">
+            <img src="{{ project.qr_code.url }}" alt="QR Code" class="mx-auto" style="max-width: 300px" />
+        </div>
+        {% endif %}
+
+        <!-- Project Information in a Table with Increased Column Gap -->
+        <table class="table-auto" style="border-spacing: 0.5rem;">
+          <tr>
+                <td class="font-semibold">Center</td>
+                <td> {% for admin in project.center_admins.all %}
+                {{ admin }}
+                {% endfor %}</td>
+            </tr>
+            <tr>
+                <td class="font-semibold">Max Participants:</td>
+                <td>{{ project.max_participants }}</td>
+            </tr>
+            {% comment %} <tr>
+                <td class="font-semibold">Current Participants:</td>
+                <td>{{ project.current_participants|default:"0" }}</td>
+            </tr> {% endcomment %}
+            <tr>
+                <td class="font-semibold">Schedule:</td>
+                <td>{{ project.start_date|date:"F j, Y" }} - {{ project.end_date|date:"F j, Y" }}</td>
+            </tr>
+        </table>
+
+        <!-- Print Link at the Bottom (Hidden in Print Mode) -->
+        <div class="text-center mt-4">
+            <a href="javascript:window.print()" class="text-blue-500 hover:text-blue-700 print:hidden">Print</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

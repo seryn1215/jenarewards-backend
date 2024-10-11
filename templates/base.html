@@ -1,0 +1,24 @@
+{% load webpack_loader static %}
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Rewards{% endblock %}</title>
+    {% stylesheet_pack 'app' %}
+    <!-- Include any additional CSS or JavaScript links here -->
+  </head>
+  <body>
+    <header>
+      <!-- Add your site's header content here -->
+    </header>
+
+    <main>{% block content %}{% endblock %}</main>
+
+    <footer>
+      <!-- Add your site's footer content here -->
+    </footer>
+    {% javascript_pack 'app' %}
+  </body>
+</html>

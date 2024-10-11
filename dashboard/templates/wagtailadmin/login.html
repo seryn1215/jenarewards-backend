@@ -1,0 +1,8 @@
+{% extends "wagtailadmin/login.html" %}
+{% load static %} 
+{% block branding_login %}Sign in to Rewards{% endblock %}
+ {% block branding_logo %}
+            <div class="login-logo">
+                <img class="login-logo-img" alt="" src="{% static 'rewards.gif' %}" />
+            </div>
+{% endblock %}
